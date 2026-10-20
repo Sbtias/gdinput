@@ -1,0 +1,19 @@
+{
+  "geode": "5.0.0",
+  "gd": {
+    "win": "2.2081"
+  },
+  "version": "v0.1.0",
+  "id": "sbtias.gdinput",
+  "name": "GDInput Buffer",
+  "developer": "Sbtias",
+  "description": "Configurable delayed input buffer for Geometry Dash. Press F6 to cycle delay stages.",
+  "settings": {
+    "verbose-log": {
+      "type": "bool",
+      "name": "Detailed logging",
+      "description": "Print queued and applied input events to the Geode log.",
+      "default": false
+    }
+  }
+}
