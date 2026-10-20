@@ -8,16 +8,17 @@ using namespace geode::prelude;
 
 namespace gdinput {
     struct Stage {
-        int regular;
-        int wave;
+        int bufferTicks;
+        int waveTicks;
     };
 
-    // One physics tick is treated as 1/240 second.
+    // At 240 physics ticks per second: 4 ticks ~= 16.7 ms, 8 ~= 33.3 ms.
+    // These values are buffer windows, not artificial input delays.
     constexpr Stage STAGES[] = {
-        {2, 2},
-        {4, 4},
-        {8, 8},
-        {16, 8}
+        {2, 0},
+        {4, 0},
+        {8, 0},
+        {16, 0}
     };
     constexpr int OFF = 4;
     inline int stage = 0;
@@ -28,7 +29,7 @@ namespace gdinput {
 
     inline void showStage() {
         if (stage == OFF) {
-            log::info("[GDInput] Input buffer OFF (raw input)");
+            log::info("[GDInput] Jump buffer OFF");
             Notification::create("GDInput  |  OFF", NotificationIcon::Info)->show();
             return;
         }
@@ -36,15 +37,13 @@ namespace gdinput {
         const auto s = STAGES[stage];
         const char* names[] = { "NOOB", "PRO", "BEST MODE", "BEST MODE +" };
         const char* descriptions[] = {
-            "2-tick input delay",
-            "4-tick input delay",
-            "8-tick input delay",
-            "16-tick regular / 8-tick wave delay"
+            "2-tick jump buffer",
+            "4-tick jump buffer",
+            "8-tick jump buffer",
+            "16-tick jump buffer"
         };
 
-        log::info("[GDInput] {}: {} ticks regular / {} ticks wave",
-            names[stage], s.regular, s.wave);
-
+        log::info("[GDInput] {}: {}-tick jump buffer", names[stage], s.bufferTicks);
         Notification::create(
             fmt::format("GDInput  |  {}\n{}", names[stage], descriptions[stage]),
             NotificationIcon::Success
@@ -52,53 +51,110 @@ namespace gdinput {
     }
 }
 
-struct GDInputPending {
-    bool down;
-    int button;
+// Geometry Dash's jump button ID is 1.
+constexpr int GDINPUT_JUMP_BUTTON = 1;
+
+struct GDInputPendingJump {
     bool player1;
     int remaining;
+    bool released;
 };
 
 class $modify(GDInputBaseLayer, GJBaseGameLayer) {
     struct Fields {
-        std::deque<GDInputPending> queue;
+        std::deque<GDInputPendingJump> pendingJumps;
         bool applying = false;
     };
 
     void handleButton(bool down, int button, bool isPlayer1) {
         auto* fields = m_fields.self();
 
-        if (fields->applying || gdinput::stage == gdinput::OFF) {
+        if (fields->applying || gdinput::stage == gdinput::OFF ||
+            button != GDINPUT_JUMP_BUTTON) {
             GJBaseGameLayer::handleButton(down, button, isPlayer1);
             return;
         }
 
         auto* player = isPlayer1 ? m_player1 : m_player2;
-        const bool wave = player && player->m_isDart;
-        const auto config = gdinput::STAGES[gdinput::stage];
-        const int delay = wave ? config.wave : config.regular;
-
-        fields->queue.push_back({down, button, isPlayer1, delay});
-
-        if (gdinput::verbose()) {
-            log::info("[GDInput] Queued {} for {} ticks",
-                down ? "press" : "release", delay);
+        if (!player) {
+            GJBaseGameLayer::handleButton(down, button, isPlayer1);
+            return;
         }
+
+        // If a jump press is already waiting for landing, remember the release
+        // but don't send a release for a press the game has not received yet.
+        auto pending = fields->pendingJumps.end();
+        for (auto it = fields->pendingJumps.begin(); it != fields->pendingJumps.end(); ++it) {
+            if (it->player1 == isPlayer1) {
+                pending = it;
+                break;
+            }
+        }
+
+        if (!down && pending != fields->pendingJumps.end()) {
+            pending->released = true;
+            if (gdinput::verbose()) {
+                log::info("[GDInput] Remembered release for buffered jump");
+            }
+            return;
+        }
+
+        // Only buffer an early jump press. Other buttons, including orbs and
+        // directional inputs, pass through immediately and keep their timing.
+        if (down && !player->m_isDart && !player->m_isOnGround) {
+            const int window = gdinput::STAGES[gdinput::stage].bufferTicks;
+            if (pending != fields->pendingJumps.end()) {
+                pending->remaining = window;
+                pending->released = false;
+            } else {
+                fields->pendingJumps.push_back({isPlayer1, window, false});
+            }
+
+            if (gdinput::verbose()) {
+                log::info("[GDInput] Buffered early jump for {} ticks", window);
+            }
+            return;
+        }
+
+        GJBaseGameLayer::handleButton(down, button, isPlayer1);
     }
 
     void processCommands(float dt, bool isHalfTick, bool isLastTick) {
         auto* fields = m_fields.self();
 
-        for (auto it = fields->queue.begin(); it != fields->queue.end();) {
+        for (auto it = fields->pendingJumps.begin(); it != fields->pendingJumps.end();) {
+            auto* player = it->player1 ? m_player1 : m_player2;
+
+            if (!player) {
+                it = fields->pendingJumps.erase(it);
+                continue;
+            }
+
+            // Execute the saved press as soon as the player reaches the ground.
+            if (player->m_isOnGround && !player->m_isDart) {
+                const bool wasReleased = it->released;
+                const bool player1 = it->player1;
+
+                fields->applying = true;
+                GJBaseGameLayer::handleButton(true, GDINPUT_JUMP_BUTTON, player1);
+                if (wasReleased) {
+                    GJBaseGameLayer::handleButton(false, GDINPUT_JUMP_BUTTON, player1);
+                }
+                fields->applying = false;
+
+                if (gdinput::verbose()) {
+                    log::info("[GDInput] Applied buffered jump on landing");
+                }
+                it = fields->pendingJumps.erase(it);
+                continue;
+            }
+
             --it->remaining;
             if (it->remaining <= 0) {
-                fields->applying = true;
-                GJBaseGameLayer::handleButton(it->down, it->button, it->player1);
-                fields->applying = false;
                 if (gdinput::verbose()) {
-                    log::info("[GDInput] Applied buffered input");
+                    log::info("[GDInput] Buffered jump expired");
                 }
-                it = fields->queue.erase(it);
+                it = fields->pendingJumps.erase(it);
             } else {
                 ++it;
             }
@@ -113,7 +169,7 @@ class $modify(GDInputPlayLayer, PlayLayer) {
         auto* base = static_cast<GDInputBaseLayer*>(
             static_cast<GJBaseGameLayer*>(this)
         );
-        base->m_fields->queue.clear();
+        base->m_fields->pendingJumps.clear();
         PlayLayer::resetLevel();
     }
 };
@@ -130,5 +186,5 @@ class $modify(GDInputKeyboard, CCKeyboardDispatcher) {
 };
 
 $on_mod(Loaded) {
-    log::info("[GDInput] Loaded. F6 cycles NOOB -> PRO -> BEST MODE -> BEST MODE + -> OFF.");
+    log::info("[GDInput] Loaded. F6 cycles jump buffer windows: 2 -> 4 -> 8 -> 16 ticks -> OFF.");
 }
