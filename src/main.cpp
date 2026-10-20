@@ -26,14 +26,29 @@ namespace gdinput {
         return Mod::get()->getSettingValue<bool>("verbose-log");
     }
 
-    inline void logStage() {
+    inline void showStage() {
         if (stage == OFF) {
             log::info("[GDInput] Input buffer OFF (raw input)");
+            Notification::create("GDInput  |  OFF", NotificationIcon::Info)->show();
             return;
         }
+
         const auto s = STAGES[stage];
-        log::info("[GDInput] Stage {}: {} ticks regular / {} ticks wave",
-            stage + 1, s.regular, s.wave);
+        const char* names[] = { "NOOB", "PRO", "BEST MODE", "BEST MODE +" };
+        const char* descriptions[] = {
+            "2-tick input delay",
+            "4-tick input delay",
+            "8-tick input delay",
+            "16-tick regular / 8-tick wave delay"
+        };
+
+        log::info("[GDInput] {}: {} ticks regular / {} ticks wave",
+            names[stage], s.regular, s.wave);
+
+        Notification::create(
+            fmt::format("GDInput  |  {}\n{}", names[stage], descriptions[stage]),
+            NotificationIcon::Success
+        )->show();
     }
 }
 
@@ -107,7 +122,7 @@ class $modify(GDInputKeyboard, CCKeyboardDispatcher) {
     bool dispatchKeyboardMSG(enumKeyCodes key, bool down, bool repeat, double timestamp) {
         if (down && !repeat && key == KEY_F6) {
             gdinput::stage = (gdinput::stage + 1) % 5;
-            gdinput::logStage();
+            gdinput::showStage();
             return true;
         }
         return CCKeyboardDispatcher::dispatchKeyboardMSG(key, down, repeat, timestamp);
@@ -115,5 +130,5 @@ class $modify(GDInputKeyboard, CCKeyboardDispatcher) {
 };
 
 $on_mod(Loaded) {
-    log::info("[GDInput] Loaded. F6 cycles 2 -> 4 -> 8 -> 16 -> OFF ticks.");
+    log::info("[GDInput] Loaded. F6 cycles NOOB -> PRO -> BEST MODE -> BEST MODE + -> OFF.");
 }
