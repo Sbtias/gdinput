@@ -12,13 +12,13 @@ namespace gdinput {
         int waveTicks;
     };
 
-    // At 240 physics ticks per second: 4 ticks ~= 16.7 ms, 8 ~= 33.3 ms.
-    // These values are buffer windows, not artificial input delays.
+    // At 240 physics ticks per second, 32 ticks is about 133 ms.
+    // These are input-buffer windows, not artificial input delays.
     constexpr Stage STAGES[] = {
-        {2, 0},
         {4, 0},
         {8, 0},
-        {16, 0}
+        {16, 0},
+        {32, 0}
     };
     constexpr int OFF = 4;
     inline int stage = 0;
@@ -37,10 +37,10 @@ namespace gdinput {
         const auto s = STAGES[stage];
         const char* names[] = { "NOOB", "PRO", "BEST MODE", "BEST MODE +" };
         const char* descriptions[] = {
-            "2-tick jump buffer",
             "4-tick jump buffer",
             "8-tick jump buffer",
-            "16-tick jump buffer"
+            "16-tick jump buffer",
+            "32-tick jump buffer"
         };
 
         log::info("[GDInput] {}: {}-tick jump buffer", names[stage], s.bufferTicks);
@@ -186,5 +186,5 @@ class $modify(GDInputKeyboard, CCKeyboardDispatcher) {
 };
 
 $on_mod(Loaded) {
-    log::info("[GDInput] Loaded. F6 cycles jump buffer windows: 2 -> 4 -> 8 -> 16 ticks -> OFF.");
+    log::info("[GDInput] Loaded. F6 cycles jump buffer windows: 4 -> 8 -> 16 -> 32 ticks -> OFF.");
 }
